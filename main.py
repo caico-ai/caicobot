@@ -1,70 +1,62 @@
-# chatbot-caico.py - Assistants API Integration
 
-from flask import Flask, request, jsonify
-import openai
 import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from openai import OpenAI
 
 app = Flask(__name__)
+CORS(app)
 
-# Configurações
-openai.api_key = os.environ.get("OPENAI_API_KEY")
-assistant_id = os.environ.get("OPENAI_ASSISTANT_ID")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+assistant_id = os.getenv("OPENAI_ASSISTANT_ID")
 
-# Inicializa cache de thread_id por sessão
-thread_ids = {}
-
-@app.route("/chat", methods=["POST"])
+@app.route('/chat', methods=['POST'])
 def chat():
-    data = request.get_json()
-    if not data or 'message' not in data:
-        return jsonify({'error': 'Invalid request'}), 400
-
-    mensagem = data['message']
-    session_id = data.get("session_id", "default")
-
     try:
-        # Cria uma thread nova por sessão (se não existir)
-        if session_id not in thread_ids:
-            thread = openai.beta.threads.create()
-            thread_ids[session_id] = thread.id
+        data = request.get_json()
+        user_message = data.get("message", "").strip()
 
-        thread_id = thread_ids[session_id]
+        if not user_message:
+            return jsonify({"error": "Empty message"}), 400
 
-        # Adiciona a mensagem do usuário
-        openai.beta.threads.messages.create(
-            thread_id=thread_id,
+        # Criação de nova thread
+        thread = client.beta.threads.create()
+
+        # Envia mensagem do usuário
+        client.beta.threads.messages.create(
+            thread_id=thread.id,
             role="user",
-            content=mensagem
+            content=user_message
         )
 
-        # Executa o Assistant
-        run = openai.beta.threads.runs.create(
-            thread_id=thread_id,
+        # Executa o assistant na thread
+        run = client.beta.threads.runs.create(
+            thread_id=thread.id,
             assistant_id=assistant_id
         )
 
-        # Aguarda a execução finalizar
+        # Aguarda conclusão
         while True:
-            status = openai.beta.threads.runs.retrieve(
-                thread_id=thread_id,
+            run_status = client.beta.threads.runs.retrieve(
+                thread_id=thread.id,
                 run_id=run.id
             )
-            if status.status == "completed":
+            if run_status.status == "completed":
                 break
-            elif status.status == "failed":
-                return jsonify({"error": "Failed to complete run."}), 500
+            elif run_status.status == "failed":
+                return jsonify({"error": "Assistant run failed"}), 500
 
-        # Busca a resposta
-        messages = openai.beta.threads.messages.list(thread_id=thread_id)
-        for msg in reversed(messages.data):
+        # Recupera a resposta
+        messages = client.beta.threads.messages.list(thread_id=thread.id)
+        for msg in messages.data:
             if msg.role == "assistant":
-                resposta = msg.content[0].text.value
-                return jsonify({'response': resposta})
+                content = msg.content[0].text.value
+                return jsonify({"response": content})
 
-        return jsonify({'response': 'Sem resposta.'})
+        return jsonify({"error": "No response from Assistant"}), 500
 
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
