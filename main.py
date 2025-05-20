@@ -1,4 +1,4 @@
-// chatbot-caico.py - Assistants API Integration
+# chatbot-caico.py - Assistants API Integration
 
 from flask import Flask, request, jsonify
 import openai
